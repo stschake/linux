@@ -919,3 +919,27 @@ void drm_property_change_valid_put(struct drm_property *property,
 	} else if (drm_property_type_is(property, DRM_MODE_PROP_BLOB))
 		drm_property_blob_put(obj_to_blob(ref));
 }
+
+/**
+ * drm_property_create_rgba - create a new RGBA property type
+ * @dev: drm device
+ * @flags: flags specifying the property type
+ * @name: name of the property
+ *
+ * This creates a new generic drm property which can then be attached to a drm
+ * object with drm_object_attach_property. The returned property object must be
+ * freed with drm_property_destroy.
+ *
+ * Userspace should use the DRM_RGBA() macro to build values with the proper
+ * bit layout.
+ *
+ * Returns:
+ * A pointer to the newly created property on success, NULL on failure.
+ */
+struct drm_property *drm_property_create_rgba(struct drm_device *dev, int flags,
+					      const char *name)
+{
+	return drm_property_create_range(dev, flags, name,
+					 0, GENMASK_ULL(63, 0));
+}
+EXPORT_SYMBOL(drm_property_create_rgba);

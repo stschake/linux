@@ -409,3 +409,26 @@ int drm_atomic_normalize_zpos(struct drm_device *dev,
 	return 0;
 }
 EXPORT_SYMBOL(drm_atomic_normalize_zpos);
+
+/**
+ * drm_mode_create_background_color_property - create CRTC color property
+ * @dev: DRM device
+ *
+ * Creates a property to represent CRTC background/canvas color.  Called by a
+ * driver the first time it's needed, must be attached to desired CRTC's.
+ */
+int drm_mode_create_background_color_property(struct drm_device *dev)
+{
+	struct drm_property *background_color;
+
+	if (dev->mode_config.background_color_property)
+		return 0;
+
+	background_color = drm_property_create_rgba(dev, DRM_MODE_PROP_ATOMIC,
+												"background_color");
+
+	dev->mode_config.background_color_property = background_color;
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_mode_create_background_color_property);

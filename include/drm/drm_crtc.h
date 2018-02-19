@@ -187,6 +187,9 @@ struct drm_crtc_state {
 	 */
 	struct drm_property_blob *gamma_lut;
 
+	/* CRTC background color */
+	struct drm_rgba background_color;
+
 	/**
 	 * @target_vblank:
 	 *

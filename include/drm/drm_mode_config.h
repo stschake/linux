@@ -779,6 +779,12 @@ struct drm_mode_config {
 	 */
 	struct drm_property *panel_orientation_property;
 
+	/**
+	 * @background_color_property: Optional CRTC property for the color of
+	 * regions not covered by planes.
+	 */
+	struct drm_property *background_color_property;
+
 	/* dumb ioctl parameters */
 	uint32_t preferred_depth, prefer_shadow;
 
