@@ -368,6 +368,8 @@ static void vc4_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 	struct drm_crtc_state *state = crtc->state;
 	struct drm_display_mode *mode = &state->adjusted_mode;
+	struct drm_rgba background = state->background_color;
+	bool fill_background = DRM_RGBA_ALPHABITS(background, 8) > 0;
 	bool interlace = mode->flags & DRM_MODE_FLAG_INTERLACE;
 	u32 pixel_rep = (mode->flags & DRM_MODE_FLAG_DBLCLK) ? 2 : 1;
 	bool is_dsi = (vc4_encoder->type == VC4_ENCODER_TYPE_DSI0 ||
@@ -458,7 +460,11 @@ static void vc4_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	HVS_WRITE(SCALER_DISPBKGNDX(vc4_crtc->channel),
 		  SCALER_DISPBKGND_AUTOHS |
 		  SCALER_DISPBKGND_GAMMA |
-		  (interlace ? SCALER_DISPBKGND_INTERLACE : 0));
+		  (interlace ? SCALER_DISPBKGND_INTERLACE : 0) |
+		  (fill_background ? SCALER_DISPBKGND_FILL : 0) |
+		  DRM_RGBA_REDBITS(background, 8) << 16 |
+		  DRM_RGBA_GREENBITS(background, 8) << 8 |
+		  DRM_RGBA_BLUEBITS(background, 8));
 
 	/* Reload the LUT, since the SRAMs would have been disabled if
 	 * all CRTCs had SCALER_DISPBKGND_GAMMA unset at once.
@@ -967,6 +973,18 @@ vc4_crtc_get_cob_allocation(struct vc4_crtc *vc4_crtc)
 	vc4_crtc->cob_size = top - base + 4;
 }
 
+static void vc4_create_background_color_property(struct drm_device *dev,
+				    struct drm_crtc *crtc)
+{
+	drm_mode_create_background_color_property(dev);
+	if (!dev->mode_config.background_color_property)
+		return;
+
+	drm_object_attach_property(&crtc->base,
+				   dev->mode_config.background_color_property,
+				   drm_rgba(8, 0, 0, 0, 0).v);
+}
+
 static int vc4_crtc_bind(struct device *dev, struct device *master, void *data)
 {
 	struct platform_device *pdev = to_platform_device(dev);
@@ -1010,6 +1028,7 @@ static int vc4_crtc_bind(struct device *dev, struct device *master, void *data)
 	primary_plane->crtc = crtc;
 	vc4_crtc->channel = vc4_crtc->data->hvs_channel;
 	drm_mode_crtc_set_gamma_size(crtc, ARRAY_SIZE(vc4_crtc->lut_r));
+	vc4_create_background_color_property(drm, crtc);
 
 	/* Set up some arbitrary number of planes.  We're not limited
 	 * by a set number of physical registers, just the space in
