@@ -521,6 +521,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 	u32 ctl0_offset = vc4_state->dlist_count;
 	const struct hvs_format *format = vc4_get_hvs_format(fb->format->format);
 	int num_planes = drm_format_num_planes(format->drm);
+	bool primary_plane = state->crtc->primary == plane;
 	u32 scl0, scl1, pitch0;
 	u32 lbm_size, tiling;
 	unsigned long irqflags;
@@ -620,8 +621,12 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 
 	/* Position Word 2: Source Image Size, Alpha Mode */
 	vc4_state->pos2_offset = vc4_state->dlist_count;
+	/* We do not enable the HVS background color fill so the primary plane
+	 * must be opaque to avoid display artifacts. Achieve this by always
+	 * using fixed alpha (initialized to 0xff above) on the primary plane.
+	 */
 	vc4_dlist_write(vc4_state,
-			VC4_SET_FIELD(fb->format->has_alpha ?
+			VC4_SET_FIELD(fb->format->has_alpha && !primary_plane ?
 				      SCALER_POS2_ALPHA_MODE_PIPELINE :
 				      SCALER_POS2_ALPHA_MODE_FIXED,
 				      SCALER_POS2_ALPHA_MODE) |
