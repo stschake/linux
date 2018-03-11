@@ -316,6 +316,82 @@ vc4_crtc_update_gamma_lut(struct drm_crtc *crtc)
 	vc4_crtc_lut_load(crtc);
 }
 
+/* Converts a DRM S31.32 value to the HW S0.9 format. */
+static u16 vc4_crtc_s31_32_to_s0_9(u64 in)
+{
+	u16 r;
+
+	/* Sign bit. */
+	r = in & BIT_ULL(63) ? BIT(9) : 0;
+	/* We have zero integer bits so we can only saturate here. */
+	if ((in & GENMASK_ULL(62, 32)) > 0)
+		r |= GENMASK(8, 0);
+	/* Otherwise take the 9 most important fractional bits. */
+	else
+		r |= (in >> 22) & GENMASK(8, 0);
+	return r;
+}
+
+static void
+vc4_crtc_update_ctm(struct drm_crtc *crtc)
+{
+	struct drm_device *dev = crtc->dev;
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
+	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
+	struct drm_color_ctm *ctm = (struct drm_color_ctm *)
+		crtc->state->ctm->data;
+
+	HVS_WRITE(SCALER_OLEDCOEF2,
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[0]),
+				SCALER_OLEDCOEF2_R_TO_R) |
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[3]),
+				SCALER_OLEDCOEF2_R_TO_G) |
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[6]),
+				SCALER_OLEDCOEF2_R_TO_B));
+	HVS_WRITE(SCALER_OLEDCOEF1,
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[1]),
+				SCALER_OLEDCOEF1_G_TO_R) |
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[4]),
+				SCALER_OLEDCOEF1_G_TO_G) |
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[7]),
+				SCALER_OLEDCOEF1_G_TO_B));
+	HVS_WRITE(SCALER_OLEDCOEF0,
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[2]),
+				SCALER_OLEDCOEF0_B_TO_R) |
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[5]),
+				SCALER_OLEDCOEF0_B_TO_G) |
+		  VC4_SET_FIELD(vc4_crtc_s31_32_to_s0_9(ctm->matrix[8]),
+				SCALER_OLEDCOEF0_B_TO_B));
+
+	/* Channel is 0-based but for DISPFIFO, 0 means disabled. */
+	HVS_WRITE(SCALER_OLEDOFFS, VC4_SET_FIELD(vc4_crtc->channel + 1,
+						 SCALER_OLEDOFFS_DISPFIFO));
+}
+
+/* Check if the CTM contains valid input.
+ *
+ * DRM exposes CTM with S31.32 scalars, but the HW only supports S0.9.
+ * We don't allow integer values >1, and 1 only without fractional part
+ * to handle the common 1.0 value.
+ */
+static int vc4_crtc_atomic_check_ctm(struct drm_crtc_state *state)
+{
+	struct drm_color_ctm *ctm = (struct drm_color_ctm *)state->ctm->data;
+	u32 i;
+
+	for (i = 0; i < ARRAY_SIZE(ctm->matrix); i++) {
+		u64 val = ctm->matrix[i];
+
+		val &= ~BIT_ULL(63);
+		if ((val >> 32) > 1)
+			return -EINVAL;
+		if ((val >> 32) == 1 && (val & GENMASK_ULL(31, 0)) != 0)
+			return -EINVAL;
+	}
+
+	return 0;
+}
+
 static u32 vc4_get_fifo_full_level(u32 format)
 {
 	static const u32 fifo_len_bytes = 64;
@@ -622,6 +698,15 @@ static int vc4_crtc_atomic_check(struct drm_crtc *crtc,
 	if (hweight32(state->connector_mask) > 1)
 		return -EINVAL;
 
+	if (state->ctm) {
+		/* The CTM hardware has no integer bits, so we check
+		 * and reject scalars >1.0 that we have no chance of
+		 * approximating.
+		 */
+		if (vc4_crtc_atomic_check_ctm(state))
+			return -EINVAL;
+	}
+
 	drm_atomic_crtc_state_for_each_plane_state(plane, plane_state, state)
 		dlist_count += vc4_plane_dlist_size(plane_state);
 
@@ -698,8 +783,17 @@ static void vc4_crtc_atomic_flush(struct drm_crtc *crtc,
 	if (crtc->state->active && old_state->active)
 		vc4_crtc_update_dlist(crtc);
 
-	if (crtc->state->color_mgmt_changed && crtc->state->gamma_lut)
-		vc4_crtc_update_gamma_lut(crtc);
+	if (crtc->state->color_mgmt_changed) {
+		if (crtc->state->gamma_lut)
+			vc4_crtc_update_gamma_lut(crtc);
+
+		if (crtc->state->ctm)
+			vc4_crtc_update_ctm(crtc);
+		/* We are transitioning to CTM disabled. */
+		else if (old_state->ctm)
+			HVS_WRITE(SCALER_OLEDOFFS,
+				  VC4_SET_FIELD(0, SCALER_OLEDOFFS_DISPFIFO));
+	}
 
 	if (debug_dump_regs) {
 		DRM_INFO("CRTC %d HVS after:\n", drm_crtc_index(crtc));
@@ -1037,7 +1131,7 @@ static int vc4_crtc_bind(struct device *dev, struct device *master, void *data)
 	primary_plane->crtc = crtc;
 	vc4_crtc->channel = vc4_crtc->data->hvs_channel;
 	drm_mode_crtc_set_gamma_size(crtc, ARRAY_SIZE(vc4_crtc->lut_r));
-	drm_crtc_enable_color_mgmt(crtc, 0, false, crtc->gamma_size);
+	drm_crtc_enable_color_mgmt(crtc, 0, true, crtc->gamma_size);
 
 	/* Set up some arbitrary number of planes.  We're not limited
 	 * by a set number of physical registers, just the space in
