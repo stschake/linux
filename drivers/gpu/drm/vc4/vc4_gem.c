@@ -27,6 +27,7 @@
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/sched/signal.h>
+#include <linux/sync_file.h>
 
 #include "uapi/drm/vc4_drm.h"
 #include "vc4_drv.h"
@@ -1115,18 +1116,15 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 	struct drm_vc4_submit_cl *args = data;
 	struct vc4_exec_info *exec;
 	struct ww_acquire_ctx acquire_ctx;
+	struct dma_fence *in_fence;
 	int ret = 0;
 
 	if ((args->flags & ~(VC4_SUBMIT_CL_USE_CLEAR_COLOR |
 			     VC4_SUBMIT_CL_FIXED_RCL_ORDER |
 			     VC4_SUBMIT_CL_RCL_ORDER_INCREASING_X |
-			     VC4_SUBMIT_CL_RCL_ORDER_INCREASING_Y)) != 0) {
+			     VC4_SUBMIT_CL_RCL_ORDER_INCREASING_Y |
+			     VC4_SUBMIT_CL_IMPORT_FENCE_FD)) != 0) {
 		DRM_DEBUG("Unknown flags: 0x%02x\n", args->flags);
-		return -EINVAL;
-	}
-
-	if (args->pad2 != 0) {
-		DRM_DEBUG("->pad2 must be set to zero\n");
 		return -EINVAL;
 	}
 
@@ -1147,6 +1145,32 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 		}
 	}
 	mutex_unlock(&vc4->power_lock);
+
+	if (args->flags & VC4_SUBMIT_CL_IMPORT_FENCE_FD) {
+		in_fence = sync_file_get_fence(args->fence_fd);
+		if (!in_fence) {
+			DRM_DEBUG("Failed to get import fence\n");
+			kfree(exec);
+			return -EINVAL;
+		}
+
+		/* When the fence (or fence array) is exclusively from our
+		 * context we can skip the wait since jobs are executed in
+		 * order of their submission through this ioctl and this is
+		 * clearly from a prior job.
+		 */
+		if (!dma_fence_match_context(in_fence,
+					     vc4->dma_fence_context)) {
+			ret = dma_fence_wait(in_fence, true);
+			if (ret) {
+				dma_fence_put(in_fence);
+				kfree(exec);
+				return ret;
+			}
+		}
+
+		dma_fence_put(in_fence);
+	}
 
 	exec->args = args;
 	INIT_LIST_HEAD(&exec->unref_list);

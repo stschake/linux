@@ -173,6 +173,7 @@ struct drm_vc4_submit_cl {
 #define VC4_SUBMIT_CL_FIXED_RCL_ORDER			(1 << 1)
 #define VC4_SUBMIT_CL_RCL_ORDER_INCREASING_X		(1 << 2)
 #define VC4_SUBMIT_CL_RCL_ORDER_INCREASING_Y		(1 << 3)
+#define VC4_SUBMIT_CL_IMPORT_FENCE_FD			(1 << 4)
 	__u32 flags;
 
 	/* Returned value of the seqno of this render job (for the
@@ -183,11 +184,8 @@ struct drm_vc4_submit_cl {
 	/* ID of the perfmon to attach to this job. 0 means no perfmon. */
 	__u32 perfmonid;
 
-	/* Unused field to align this struct on 64 bits. Must be set to 0.
-	 * If one ever needs to add an u32 field to this struct, this field
-	 * can be used.
-	 */
-	__u32 pad2;
+	/* In fence fd. Set together with IMPORT_FENCE_FD flag. */
+	__s32 fence_fd;
 };
 
 /**
