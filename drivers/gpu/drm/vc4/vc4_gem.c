@@ -656,13 +656,14 @@ retry:
  */
 static int
 vc4_queue_submit(struct drm_device *dev, struct vc4_exec_info *exec,
-		 struct ww_acquire_ctx *acquire_ctx)
+		 struct ww_acquire_ctx *acquire_ctx, int out_fence_fd)
 {
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct vc4_exec_info *renderjob;
 	uint64_t seqno;
 	unsigned long irqflags;
 	struct vc4_fence *fence;
+	struct sync_file *sync_file;
 
 	fence = kzalloc(sizeof(*fence), GFP_KERNEL);
 	if (!fence)
@@ -678,6 +679,16 @@ vc4_queue_submit(struct drm_device *dev, struct vc4_exec_info *exec,
 		       vc4->dma_fence_context, exec->seqno);
 	fence->seqno = exec->seqno;
 	exec->fence = &fence->base;
+
+	if (out_fence_fd >= 0) {
+		sync_file = sync_file_create(exec->fence);
+		if (!sync_file) {
+			spin_unlock_irqrestore(&vc4->job_lock, irqflags);
+			return -ENOMEM;
+		}
+
+		fd_install(out_fence_fd, sync_file->file);
+	}
 
 	vc4_update_bo_seqnos(exec, seqno);
 
@@ -1117,13 +1128,15 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 	struct vc4_exec_info *exec;
 	struct ww_acquire_ctx acquire_ctx;
 	struct dma_fence *in_fence;
+	int out_fence_fd = -1;
 	int ret = 0;
 
 	if ((args->flags & ~(VC4_SUBMIT_CL_USE_CLEAR_COLOR |
 			     VC4_SUBMIT_CL_FIXED_RCL_ORDER |
 			     VC4_SUBMIT_CL_RCL_ORDER_INCREASING_X |
 			     VC4_SUBMIT_CL_RCL_ORDER_INCREASING_Y |
-			     VC4_SUBMIT_CL_IMPORT_FENCE_FD)) != 0) {
+			     VC4_SUBMIT_CL_IMPORT_FENCE_FD |
+			     VC4_SUBMIT_CL_EXPORT_FENCE_FD)) != 0) {
 		DRM_DEBUG("Unknown flags: 0x%02x\n", args->flags);
 		return -EINVAL;
 	}
@@ -1172,6 +1185,19 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 		dma_fence_put(in_fence);
 	}
 
+	if (args->flags & VC4_SUBMIT_CL_EXPORT_FENCE_FD) {
+		out_fence_fd = get_unused_fd_flags(O_CLOEXEC);
+		if (out_fence_fd < 0) {
+			ret = out_fence_fd;
+			goto fail;
+		}
+
+		/* The fd is linked to an actual dma fence inside
+		 * vc4_queue_submit.
+		 */
+		args->fence_fd = out_fence_fd;
+	}
+
 	exec->args = args;
 	INIT_LIST_HEAD(&exec->unref_list);
 
@@ -1210,7 +1236,7 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 	 */
 	exec->args = NULL;
 
-	ret = vc4_queue_submit(dev, exec, &acquire_ctx);
+	ret = vc4_queue_submit(dev, exec, &acquire_ctx, out_fence_fd);
 	if (ret)
 		goto fail;
 
@@ -1220,6 +1246,8 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 	return 0;
 
 fail:
+	if (out_fence_fd >= 0)
+		put_unused_fd(out_fence_fd);
 	vc4_complete_exec(vc4->dev, exec);
 
 	return ret;
