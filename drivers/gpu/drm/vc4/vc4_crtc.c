@@ -680,10 +680,17 @@ static enum drm_mode_status vc4_crtc_mode_valid(struct drm_crtc *crtc,
 	return MODE_OK;
 }
 
+static int vc4_crtc_get_ctm_fifo(struct vc4_dev *vc4)
+{
+	return VC4_GET_FIELD(HVS_READ(SCALER_OLEDOFFS),
+			     SCALER_OLEDOFFS_DISPFIFO);
+}
+
 static int vc4_crtc_atomic_check(struct drm_crtc *crtc,
 				 struct drm_crtc_state *state)
 {
 	struct vc4_crtc_state *vc4_state = to_vc4_crtc_state(state);
+	struct drm_crtc_state *old_state = crtc->state;
 	struct drm_device *dev = crtc->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct drm_plane *plane;
@@ -704,6 +711,10 @@ static int vc4_crtc_atomic_check(struct drm_crtc *crtc,
 		 * approximating.
 		 */
 		if (vc4_crtc_atomic_check_ctm(state))
+			return -EINVAL;
+
+		/* We can only enable CTM for one fifo or CRTC at a time */
+		if (!old_state->ctm && vc4_crtc_get_ctm_fifo(vc4))
 			return -EINVAL;
 	}
 
