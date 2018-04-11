@@ -10,6 +10,8 @@
 #include <drm/drmP.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_syncobj.h>
+
 
 #include "uapi/drm/vc4_drm.h"
 
