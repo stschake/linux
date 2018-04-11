@@ -174,6 +174,7 @@ struct drm_vc4_submit_cl {
 #define VC4_SUBMIT_CL_RCL_ORDER_INCREASING_X		(1 << 2)
 #define VC4_SUBMIT_CL_RCL_ORDER_INCREASING_Y		(1 << 3)
 #define VC4_SUBMIT_CL_IMPORT_SYNCOBJ			(1 << 4)
+#define VC4_SUBMIT_CL_EXPORT_SYNCOBJ			(1 << 5)
 	__u32 flags;
 
 	/* Returned value of the seqno of this render job (for the
@@ -189,6 +190,18 @@ struct drm_vc4_submit_cl {
 	 * syncobj is signalled.
 	 */
 	__u32 in_sync;
+
+	/* Syncobj handle to export fence to. Set together with EXPORT_SYNCOBJ
+	 * flag. If set, the fence in the syncobj will be replaced with a fence
+	 * that signals upon completion of this render job.
+	 */
+	__u32 out_sync;
+
+	/* Unused field to align this struct on 64 bits. Must be set to 0.
+	 * If one ever needs to add an u32 field to this struct, this field
+	 * can be used.
+	 */
+	__u32 pad2;
 };
 
 /**
